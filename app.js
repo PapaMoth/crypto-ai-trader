@@ -384,6 +384,13 @@ let currentMarketRegime = 'UNKNOWN';
 let peakBalance = totalBalance;
 const tradeHistory = [];
 const coinLearningBook = {};
+const MIN_CONFIDENCE = 60;
+const STOP_LOSS = 0.005;
+const TAKE_PROFIT = 0.01;
+const TRAIL = 0.003;
+const RISK_PER_TRADE = 0.02;
+const MAX_DAILY_LOSS = 0.05;
+const COOLDOWN = 60_000;
 
 const performanceState = {
     realizedPnlUsd: 0,
@@ -508,7 +515,8 @@ function getCoinLearningState(symbol) {
         coinLearningBook[symbol] = {
             wins: 0,
             losses: 0,
-            score: 1
+            score: 1,
+            confidence: 0
         };
     }
     return coinLearningBook[symbol];
@@ -525,7 +533,20 @@ function updateCoinLearning(symbol, result) {
     }
 }
 
-function logClosedTrade(entry, price, type, result, profit, symbol) {
+function getConfidenceScore({ rsi, price, bbLower, bbUpper, avg }) {
+    let score = 0;
+    if (rsi < 25) score += 2;
+    else if (rsi < 30) score += 1;
+    if (rsi > 75) score -= 2;
+    else if (rsi > 70) score -= 1;
+    if (price < bbLower) score += 1;
+    if (price > bbUpper) score -= 1;
+    if (price > avg) score += 0.5;
+    else score -= 0.5;
+    return Math.min(100, Math.max(0, (score + 3) * 20));
+}
+
+function logClosedTrade(entry, price, type, result, profit, symbol, confidence) {
     const tradeLog = {
         time: Date.now(),
         entry,
@@ -534,7 +555,8 @@ function logClosedTrade(entry, price, type, result, profit, symbol) {
         result,
         profit,
         balance: totalBalance,
-        symbol
+        symbol,
+        confidence
     };
     tradeHistory.push(tradeLog);
     if (tradeHistory.length > 250) tradeHistory.shift();
@@ -546,9 +568,13 @@ function logClosedTrade(entry, price, type, result, profit, symbol) {
 
 async function persistTradeLog(tradeLog) {
     try {
+        const userId = localStorage.getItem('nexus_user_email') || '';
         await fetch('/api/trades', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                ...(userId ? { 'x-user-id': userId } : {})
+            },
             body: JSON.stringify(tradeLog)
         });
     } catch (err) {
@@ -606,7 +632,9 @@ function updateDynamicTrailingStop(currentPrice, regime) {
     }
 
     highestPriceSinceEntry = Math.max(highestPriceSinceEntry, currentPrice);
-    const distancePct = regime === 'TREND' ? 0.45 : 0.28;
+    const distancePct = regime === 'TREND'
+        ? Math.max(0.22, TRAIL * 100 * 0.9)
+        : Math.max(0.18, TRAIL * 100 * 0.65);
     const trailCandidate = highestPriceSinceEntry * (1 - (distancePct / 100));
     trailingStopPrice = Math.max(trailingStopPrice, trailCandidate);
 
@@ -781,6 +809,20 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
         const bullish15m = evaluate15mBullishDirection(wsPair);
         const sniperEntry5m = evaluate5mSniperEntry(ohlc, rsi);
         const currentRsi = rsi[rsi.length - 1] || 50;
+        const avg = ohlc.slice(-20).reduce((acc, c) => acc + c.close, 0) / Math.max(1, Math.min(20, ohlc.length));
+        const confidence = getConfidenceScore({
+            rsi: currentRsi,
+            price: currentPrice,
+            bbLower: bb.lower[bb.lower.length - 1]?.value || currentPrice,
+            bbUpper: bb.upper[bb.upper.length - 1]?.value || currentPrice,
+            avg
+        });
+        coinLearning.confidence = confidence;
+
+        if (confidence < MIN_CONFIDENCE) return;
+
+        if (currentMarketRegime === 'TREND' && !bullish15m) return;
+
         const aiRiskMultiplier = getAiRiskMultiplier(
             currentMarketRegime,
             bullish15m,
@@ -801,7 +843,7 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
             trailingStopPrice = 0;
             trailingStopTier = 0;
             const baseBuyAmount = nextTradeBuyUsd > 0 ? nextTradeBuyUsd : userBuyAmount;
-            entryPositionUsd = baseBuyAmount * aiRiskMultiplier;
+            entryPositionUsd = baseBuyAmount * aiRiskMultiplier * RISK_PER_TRADE;
             remainingPositionUsd = baseBuyAmount;
             partialTake20Done = false;
             keepRunnerUsd = entryPositionUsd * 0.02;
@@ -818,12 +860,14 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
         
         let shouldSell = false;
         const unrealizedPct = lastBuyPrice > 0 ? ((currentPrice - lastBuyPrice) / lastBuyPrice) * 100 : 0;
+        const takeProfitPct = (currentMarketRegime === 'TREND' ? TAKE_PROFIT * 1.2 : TAKE_PROFIT * 0.9) * 100;
+        const stopLossPrice = lastBuyPrice * (1 - STOP_LOSS);
 
         // Dynamic trailing stop management (adaptive by market regime).
         updateDynamicTrailingStop(currentPrice, currentMarketRegime);
 
         // Emergency exits: immediate and unconditional.
-        if (currentPrice < currentVwap && lastBuyPrice > 0) {
+        if (currentPrice <= stopLossPrice && lastBuyPrice > 0) {
             shouldSell = true;
             isStopLoss = true;
             forcedSellAmountUsd = Math.max(remainingPositionUsd - keepRunnerUsd, 0);
@@ -839,7 +883,7 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
             forcedSellAmountUsd = Math.max(remainingPositionUsd - keepRunnerUsd, 0);
         }
         // Planned take-profit flow.
-        else if (!partialTake20Done && unrealizedPct >= 20 && remainingPositionUsd > 0) {
+        else if (!partialTake20Done && unrealizedPct >= takeProfitPct && remainingPositionUsd > 0) {
             shouldSell = true;
             isPartialTake = true;
             forcedSellAmountUsd = entryPositionUsd * 0.5;
@@ -856,7 +900,7 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
         }
         
         if (shouldSell) {
-            if (now - lastSignalTime < 5000) return; // Prevent double-execution
+            if (now - lastSignalTime < COOLDOWN) return; // Prevent churn
             if (forcedSellAmountUsd <= 0) return;
             isBuy = false;
             lastSignalTime = now;
@@ -963,7 +1007,8 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
             'BUY',
             tradeResult,
             realized,
-            wsPair
+            wsPair,
+            coinLearning.confidence
         );
         addTradeMarker(ohlc[ohlc.length - 1].time, 'SELL', `${tradeResult} ${wsPair}`);
     }
@@ -976,6 +1021,7 @@ fetchHistoricalData();
 
 const AUTH_TOKEN_KEY = 'nexus_auth_token';
 let currentAuthToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+let currentUserEmail = localStorage.getItem('nexus_user_email') || '';
 
 function getAuthHeaders() {
     const headers = { 'Content-Type': 'application/json' };
@@ -1016,11 +1062,15 @@ async function refreshAuthStatus() {
         const response = await fetch('/api/auth/me', { headers: getAuthHeaders() });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Session expired.');
+        currentUserEmail = data.email;
+        localStorage.setItem('nexus_user_email', currentUserEmail);
         setAuthStatus(`Signed in as ${data.email}`, 'success');
         loadReferralDashboard();
     } catch (_err) {
         currentAuthToken = '';
         localStorage.removeItem(AUTH_TOKEN_KEY);
+        localStorage.removeItem('nexus_user_email');
+        currentUserEmail = '';
         setAuthStatus('Session expired. Please sign in again.', 'error');
         setApiStatus('Sign in to manage your API keys.');
         setReferralStatus('Sign in to view referral details.');
@@ -1135,6 +1185,8 @@ async function runAuthAction(route) {
 
         currentAuthToken = data.token;
         localStorage.setItem(AUTH_TOKEN_KEY, currentAuthToken);
+        currentUserEmail = data.email;
+        localStorage.setItem('nexus_user_email', currentUserEmail);
         setAuthStatus(`Signed in as ${data.email}`, 'success');
         await refreshApiKeyStatus();
         await loadReferralDashboard();
@@ -1157,6 +1209,8 @@ function setupAuthForm() {
         logoutBtn.addEventListener('click', () => {
             currentAuthToken = '';
             localStorage.removeItem(AUTH_TOKEN_KEY);
+            localStorage.removeItem('nexus_user_email');
+            currentUserEmail = '';
             setAuthStatus('Signed out.');
             setApiStatus('Sign in to manage your API keys.');
             setBillingStatus('Sign in to start checkout.');

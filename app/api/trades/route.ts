@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { Pool } from 'pg';
+import { ensureCoreSchema, getDbPool } from '../../../lib/db';
+import { requirePlan } from '../../../lib/entitlements';
 
 type TradeLogPayload = {
   time: number;
@@ -9,50 +10,14 @@ type TradeLogPayload = {
   result: 'WIN' | 'LOSS' | 'BREAKEVEN' | string;
   profit: number;
   balance: number;
+  symbol?: string;
+  confidence?: number;
 };
-
-const globalWithDb = globalThis as typeof globalThis & {
-  __tradeHistory?: TradeLogPayload[];
-  __pgPool?: Pool;
-  __tradeTableReady?: boolean;
-};
-
-function getTradeHistoryFallback() {
-  globalWithDb.__tradeHistory = globalWithDb.__tradeHistory || [];
-  return globalWithDb.__tradeHistory;
-}
-
-function getPool(): Pool | null {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) return null;
-  if (!globalWithDb.__pgPool) {
-    globalWithDb.__pgPool = new Pool({
-      connectionString,
-      ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false }
-    });
-  }
-  return globalWithDb.__pgPool;
-}
-
-async function ensureTable(pool: Pool) {
-  if (globalWithDb.__tradeTableReady) return;
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS trade_history (
-      id BIGSERIAL PRIMARY KEY,
-      time_ms BIGINT NOT NULL,
-      entry_price DOUBLE PRECISION NOT NULL,
-      exit_price DOUBLE PRECISION NOT NULL,
-      trade_type TEXT NOT NULL,
-      result TEXT NOT NULL,
-      profit DOUBLE PRECISION NOT NULL,
-      balance DOUBLE PRECISION NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  globalWithDb.__tradeTableReady = true;
-}
 
 export async function POST(req: Request) {
+  const planCheck = await requirePlan(req, ['pro', 'elite']);
+  if (!planCheck.ok) return planCheck.response;
+
   const payload = (await req.json()) as TradeLogPayload;
 
   if (
@@ -65,30 +30,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid trade payload' }, { status: 400 });
   }
 
-  const pool = getPool();
-  if (!pool) {
-    const fallback = getTradeHistoryFallback();
-    fallback.push(payload);
-    if (fallback.length > 5000) fallback.shift();
-    return NextResponse.json({ ok: true, storage: 'memory' });
-  }
-
   try {
-    await ensureTable(pool);
+    await ensureCoreSchema();
+    const pool = getDbPool();
     await pool.query(
-      `INSERT INTO trade_history (time_ms, entry_price, exit_price, trade_type, result, profit, balance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [payload.time, payload.entry, payload.exit, payload.type, payload.result, payload.profit, payload.balance]
+      `INSERT INTO trade_history (user_id, symbol, time_ms, entry_price, exit_price, trade_type, result, profit, balance, confidence)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        planCheck.userId,
+        payload.symbol || 'UNKNOWN',
+        payload.time,
+        payload.entry,
+        payload.exit,
+        payload.type,
+        payload.result,
+        payload.profit,
+        payload.balance,
+        payload.confidence ?? null
+      ]
     );
     return NextResponse.json({ ok: true, storage: 'postgres' });
   } catch (error) {
-    const fallback = getTradeHistoryFallback();
-    fallback.push(payload);
-    if (fallback.length > 5000) fallback.shift();
     return NextResponse.json({
-      ok: true,
-      storage: 'memory',
+      ok: false,
+      storage: 'postgres',
       warning: error instanceof Error ? error.message : 'DB insert failed'
-    });
+    }, { status: 503 });
   }
 }
