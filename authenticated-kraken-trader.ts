@@ -5,6 +5,7 @@
 
 import crypto from "crypto";
 import { LiveTradingWithEvolvedStrategy } from "./evolved-strategy-injector";
+import { RiskEngine } from "./lib/risk-engine";
 
 // ============= TYPES =============
 
@@ -548,6 +549,14 @@ export class AIIntegratedKrakenTrader {
   private pair: string;
   private priceHistory: number[] = [];
   private isTrading: boolean = false;
+  private readonly riskEngine = new RiskEngine({
+    maxDailyLossPct: 0.03,
+    maxSymbolExposurePct: 0.35,
+    maxTotalExposurePct: 0.8,
+  });
+  private startOfDayEquity = 0;
+  private pairExposureUsd: Map<string, number> = new Map();
+  private totalExposureUsd = 0;
 
   constructor(
     authConfig: KrakenAuthConfig,
@@ -573,6 +582,7 @@ export class AIIntegratedKrakenTrader {
 
       // Check for USD/EUR balance
       const usdBalance = balances["ZUSD"] || balances["USD"] || "0";
+      this.startOfDayEquity = parseFloat(usdBalance);
       console.log(`\nAvailable USD: ${usdBalance}\n`);
 
       // Check open orders
@@ -633,13 +643,25 @@ export class AIIntegratedKrakenTrader {
   private async executeBuySignal(price: number): Promise<void> {
     try {
       const balance = await this.trader.getAssetBalance("USD");
+      const plannedNotionalUsd = balance * 0.9;
+
+      const riskCheck = this.riskEngine.canOpenPosition(this.pair, plannedNotionalUsd, {
+        equity: balance,
+        startOfDayEquity: this.startOfDayEquity || balance,
+        symbolExposureUsd: this.pairExposureUsd.get(this.pair) || 0,
+        totalExposureUsd: this.totalExposureUsd,
+      });
+      if (!riskCheck.ok) {
+        console.warn(`⚠️ Risk block (${this.pair}): ${riskCheck.reason}`);
+        return;
+      }
 
       if (balance < price) {
         console.warn("⚠️ Insufficient balance for buy order");
         return;
       }
 
-      const amountToUse = balance * 0.9;
+      const amountToUse = plannedNotionalUsd;
       const quantity = (amountToUse / price).toFixed(8);
 
       if (parseFloat(quantity) <= 0) {
@@ -656,6 +678,9 @@ export class AIIntegratedKrakenTrader {
       if (order.txid && order.txid.length > 0) {
         this.aiTrading.recordTrade(true);
         this.trader.updateSessionMetrics(balance - amountToUse);
+        const nextExposure = (this.pairExposureUsd.get(this.pair) || 0) + amountToUse;
+        this.pairExposureUsd.set(this.pair, nextExposure);
+        this.totalExposureUsd += amountToUse;
       }
     } catch (error) {
       console.error("❌ Buy order failed:", error);
@@ -688,6 +713,10 @@ export class AIIntegratedKrakenTrader {
         const proceeds = balance * price;
         this.aiTrading.recordTrade(true);
         this.trader.updateSessionMetrics(proceeds);
+        const currentExposure = this.pairExposureUsd.get(this.pair) || 0;
+        const reduction = Math.min(currentExposure, proceeds);
+        this.pairExposureUsd.set(this.pair, Math.max(0, currentExposure - reduction));
+        this.totalExposureUsd = Math.max(0, this.totalExposureUsd - reduction);
       }
     } catch (error) {
       console.error("❌ Sell order failed:", error);

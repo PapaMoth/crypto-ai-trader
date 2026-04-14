@@ -61,6 +61,7 @@ const bbLowerSeries = chart.addLineSeries({
     crosshairMarkerVisible: false,
     title: 'BB Lower',
 });
+let tradeMarkers = [];
 
 function calculateBollingerBands(data, period, stdDevMultiplier) {
     let bbUpper = [];
@@ -368,6 +369,7 @@ let tradesCount = 14;
 let lastSignalTime = 0;
 let activeTradePair = null;
 let lastBuyPrice = 0;
+let highestPriceSinceEntry = 0;
 let trailingStopPrice = 0;
 let trailingStopTier = 0;
 let entryPositionUsd = 0;
@@ -378,6 +380,21 @@ let totalSoldUsd = 0;
 let nextTradeBuyUsd = 0;
 let lastEmergencyStatus = 'CLEAR';
 let lastEntryPingKey = '';
+let currentMarketRegime = 'UNKNOWN';
+let peakBalance = totalBalance;
+const tradeHistory = [];
+const coinLearningBook = {};
+
+const performanceState = {
+    realizedPnlUsd: 0,
+    wins: 0,
+    losses: 0,
+    maxDrawdownPct: 0,
+    tradeReturnsPct: [],
+    avgWinPct: 0,
+    avgLossPct: 0,
+    profitFactor: 0
+};
 
 const strategyState = {
     trend15m: 'WAIT',
@@ -385,7 +402,10 @@ const strategyState = {
     position: 'FLAT',
     sold: '0%',
     runner: '2%',
-    emergency: 'CLEAR'
+    emergency: 'CLEAR',
+    regime: 'UNKNOWN',
+    risk: '1.00x',
+    trail: 'OFF'
 };
 
 function renderStrategyState() {
@@ -395,6 +415,9 @@ function renderStrategyState() {
     const soldEl = document.getElementById('state-sold');
     const runnerEl = document.getElementById('state-runner');
     const emergencyEl = document.getElementById('state-emergency');
+    const regimeEl = document.getElementById('state-regime');
+    const riskEl = document.getElementById('state-risk');
+    const trailEl = document.getElementById('state-trail');
 
     if (trendEl) trendEl.innerText = strategyState.trend15m;
     if (entryEl) entryEl.innerText = strategyState.entry5m;
@@ -402,20 +425,198 @@ function renderStrategyState() {
     if (soldEl) soldEl.innerText = strategyState.sold;
     if (runnerEl) runnerEl.innerText = strategyState.runner;
     if (emergencyEl) emergencyEl.innerText = strategyState.emergency;
+    if (regimeEl) regimeEl.innerText = strategyState.regime;
+    if (riskEl) riskEl.innerText = strategyState.risk;
+    if (trailEl) trailEl.innerText = strategyState.trail;
 }
 
 function formatCurrency(val) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
 }
 
-function updateDashboardStats(profit) {
+function updateDashboardStats(profit, profitPct = 0) {
     totalBalance += profit;
     tradesCount++;
+    performanceState.realizedPnlUsd += profit;
+    performanceState.tradeReturnsPct.push(profitPct);
+    if (profit >= 0) {
+        performanceState.wins += 1;
+    } else {
+        performanceState.losses += 1;
+    }
+    if (totalBalance > peakBalance) peakBalance = totalBalance;
+    const currentDrawdown = peakBalance > 0 ? ((peakBalance - totalBalance) / peakBalance) * 100 : 0;
+    performanceState.maxDrawdownPct = Math.max(performanceState.maxDrawdownPct, currentDrawdown);
+
+    const winningReturns = performanceState.tradeReturnsPct.filter((v) => v > 0);
+    const losingReturnsAbs = performanceState.tradeReturnsPct.filter((v) => v < 0).map((v) => Math.abs(v));
+    performanceState.avgWinPct = winningReturns.length
+        ? winningReturns.reduce((a, b) => a + b, 0) / winningReturns.length
+        : 0;
+    performanceState.avgLossPct = losingReturnsAbs.length
+        ? losingReturnsAbs.reduce((a, b) => a + b, 0) / losingReturnsAbs.length
+        : 0;
+    const grossProfit = winningReturns.reduce((a, b) => a + b, 0);
+    const grossLossAbs = losingReturnsAbs.reduce((a, b) => a + b, 0);
+    performanceState.profitFactor = grossLossAbs > 0 ? (grossProfit / grossLossAbs) : grossProfit > 0 ? 99 : 0;
+
     document.getElementById('total-balance').innerText = formatCurrency(totalBalance);
     
     // Slight random UI updates to make it feel alive
     document.querySelector('.rsi-fill').style.width = Math.floor(Math.random() * 40 + 40) + '%';
     document.getElementById('confidence-score').innerText = Math.floor(Math.random() * 15 + 80) + '%';
+    updateProDashboard();
+}
+
+function updateProDashboard() {
+    const totalTrades = performanceState.wins + performanceState.losses;
+    const winRate = totalTrades ? (performanceState.wins / totalTrades) * 100 : 0;
+
+    const winRateEl = document.getElementById('pro-win-rate');
+    const avgWinEl = document.getElementById('pro-avg-win');
+    const avgLossEl = document.getElementById('pro-avg-loss');
+    const ddEl = document.getElementById('pro-drawdown');
+    const pfEl = document.getElementById('pro-profit-factor');
+    const regimeEl = document.getElementById('pro-regime');
+    const pnlEl = document.getElementById('pro-realized');
+
+    if (winRateEl) winRateEl.innerText = `${winRate.toFixed(1)}%`;
+    if (avgWinEl) avgWinEl.innerText = `${performanceState.avgWinPct.toFixed(2)}%`;
+    if (avgLossEl) avgLossEl.innerText = `${performanceState.avgLossPct.toFixed(2)}%`;
+    if (ddEl) ddEl.innerText = `${performanceState.maxDrawdownPct.toFixed(2)}%`;
+    if (pfEl) pfEl.innerText = performanceState.profitFactor.toFixed(2);
+    if (regimeEl) regimeEl.innerText = currentMarketRegime;
+    if (pnlEl) pnlEl.innerText = formatCurrency(performanceState.realizedPnlUsd);
+}
+
+function addTradeMarker(time, side, text) {
+    tradeMarkers.push({
+        time,
+        position: side === 'BUY' ? 'belowBar' : 'aboveBar',
+        color: side === 'BUY' ? '#00ffa3' : '#ff4d4d',
+        shape: side === 'BUY' ? 'arrowUp' : 'arrowDown',
+        text
+    });
+    if (tradeMarkers.length > 200) {
+        tradeMarkers = tradeMarkers.slice(tradeMarkers.length - 200);
+    }
+    candleSeries.setMarkers(tradeMarkers);
+}
+
+function getCoinLearningState(symbol) {
+    if (!coinLearningBook[symbol]) {
+        coinLearningBook[symbol] = {
+            wins: 0,
+            losses: 0,
+            score: 1
+        };
+    }
+    return coinLearningBook[symbol];
+}
+
+function updateCoinLearning(symbol, result) {
+    const state = getCoinLearningState(symbol);
+    if (result === 'WIN') {
+        state.wins += 1;
+        state.score = Math.min(1.5, state.score + 0.04);
+    } else if (result === 'LOSS') {
+        state.losses += 1;
+        state.score = Math.max(0.6, state.score - 0.05);
+    }
+}
+
+function logClosedTrade(entry, price, type, result, profit, symbol) {
+    const tradeLog = {
+        time: Date.now(),
+        entry,
+        exit: price,
+        type,
+        result,
+        profit,
+        balance: totalBalance,
+        symbol
+    };
+    tradeHistory.push(tradeLog);
+    if (tradeHistory.length > 250) tradeHistory.shift();
+    globalThis.tradeHistory = globalThis.tradeHistory || [];
+    globalThis.tradeHistory.push(tradeLog);
+    console.log(tradeLog);
+    persistTradeLog(tradeLog);
+}
+
+async function persistTradeLog(tradeLog) {
+    try {
+        await fetch('/api/trades', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(tradeLog)
+        });
+    } catch (err) {
+        console.warn('Failed to persist trade log:', err);
+    }
+}
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function detectMarketRegime(ohlc, bb, rsi) {
+    const len = ohlc.length;
+    if (len < 30 || !bb.middle[len - 1] || !bb.upper[len - 1] || !bb.lower[len - 1]) return 'UNKNOWN';
+
+    const window = 20;
+    const start = len - window;
+    const end = len - 1;
+    const startClose = ohlc[start].close;
+    const endClose = ohlc[end].close;
+    const slopePct = startClose > 0 ? ((endClose - startClose) / startClose) * 100 : 0;
+    const bandWidthPct = bb.middle[end].value > 0
+        ? ((bb.upper[end].value - bb.lower[end].value) / bb.middle[end].value) * 100
+        : 0;
+    const rsiMid = rsi[end];
+    const trendMomentum = Math.abs(slopePct) >= 1.0 && bandWidthPct >= 2.2 && (rsiMid >= 57 || rsiMid <= 43);
+    return trendMomentum ? 'TREND' : 'CHOP';
+}
+
+function getAiRiskMultiplier(regime, trendReady, sniperEntry, rsiValue, currentPrice, currentVwap) {
+    let score = 0.5;
+
+    if (regime === 'TREND') score += 0.25;
+    if (trendReady) score += 0.15;
+    if (sniperEntry) score += 0.15;
+    if (currentPrice >= currentVwap) score += 0.08;
+    if (rsiValue >= 45 && rsiValue <= 65) score += 0.07;
+
+    const normalized = clamp(score, 0, 1);
+    const multiplier = regime === 'TREND'
+        ? (0.75 + normalized * 0.55)  // 0.75x -> 1.30x
+        : (0.55 + normalized * 0.45); // 0.55x -> 1.00x
+
+    return clamp(multiplier, 0.55, 1.3);
+}
+
+function updateDynamicTrailingStop(currentPrice, regime) {
+    if (lastBuyPrice <= 0) return;
+    const profitPct = ((currentPrice - lastBuyPrice) / lastBuyPrice) * 100;
+    const activationPct = 0.6;
+
+    if (profitPct < activationPct) {
+        strategyState.trail = 'OFF';
+        return;
+    }
+
+    highestPriceSinceEntry = Math.max(highestPriceSinceEntry, currentPrice);
+    const distancePct = regime === 'TREND' ? 0.45 : 0.28;
+    const trailCandidate = highestPriceSinceEntry * (1 - (distancePct / 100));
+    trailingStopPrice = Math.max(trailingStopPrice, trailCandidate);
+
+    if (profitPct >= 1.5 && trailingStopTier < 1) trailingStopTier = 1;
+    if (profitPct >= 3.0 && trailingStopTier < 2) trailingStopTier = 2;
+    if (profitPct >= 5.0 && trailingStopTier < 3) trailingStopTier = 3;
+
+    strategyState.trail = trailingStopPrice > 0
+        ? `${distancePct.toFixed(2)}% (${trailingStopTier})`
+        : 'OFF';
 }
 
 function evaluateBuySequence(ohlc, bb, rsi) {
@@ -571,25 +772,43 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
     let forcedSellAmountUsd = 0;
     let profitPercentage = estimatedMargin;
 
+    currentMarketRegime = detectMarketRegime(ohlc, bb, rsi);
+    strategyState.regime = currentMarketRegime;
+    const coinLearning = getCoinLearningState(wsPair);
+
     // Check strict sequential conditions to BUY
     if (!activeTradePair) {
         const bullish15m = evaluate15mBullishDirection(wsPair);
         const sniperEntry5m = evaluate5mSniperEntry(ohlc, rsi);
+        const currentRsi = rsi[rsi.length - 1] || 50;
+        const aiRiskMultiplier = getAiRiskMultiplier(
+            currentMarketRegime,
+            bullish15m,
+            sniperEntry5m,
+            currentRsi,
+            currentPrice,
+            currentVwap
+        ) * coinLearning.score;
+        strategyState.risk = `${aiRiskMultiplier.toFixed(2)}x`;
+
         if (bullish15m && sniperEntry5m) {
             if (now - lastSignalTime < 5000) return; // Prevent spamming
             isBuy = true;
             activeTradePair = wsPair; // LOCK global pool
             lastSignalTime = now;
             lastBuyPrice = currentPrice;
+            highestPriceSinceEntry = currentPrice;
             trailingStopPrice = 0;
             trailingStopTier = 0;
             const baseBuyAmount = nextTradeBuyUsd > 0 ? nextTradeBuyUsd : userBuyAmount;
-            entryPositionUsd = baseBuyAmount;
+            entryPositionUsd = baseBuyAmount * aiRiskMultiplier;
             remainingPositionUsd = baseBuyAmount;
             partialTake20Done = false;
-            keepRunnerUsd = baseBuyAmount * 0.02;
+            keepRunnerUsd = entryPositionUsd * 0.02;
             totalSoldUsd = 0;
             nextTradeBuyUsd = 0;
+            strategyState.position = 'LONG';
+            addTradeMarker(ohlc[ohlc.length - 1].time, 'BUY', `BUY ${wsPair}`);
         } else {
             return; // Wait until all 3 indicators align
         }
@@ -600,12 +819,8 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
         let shouldSell = false;
         const unrealizedPct = lastBuyPrice > 0 ? ((currentPrice - lastBuyPrice) / lastBuyPrice) * 100 : 0;
 
-        // Trail stop management:
-        // +20% => move stop to break-even
-        if (lastBuyPrice > 0 && unrealizedPct >= 20 && trailingStopTier < 1) {
-            trailingStopPrice = Math.max(trailingStopPrice, lastBuyPrice);
-            trailingStopTier = 1;
-        }
+        // Dynamic trailing stop management (adaptive by market regime).
+        updateDynamicTrailingStop(currentPrice, currentMarketRegime);
 
         // Emergency exits: immediate and unconditional.
         if (currentPrice < currentVwap && lastBuyPrice > 0) {
@@ -664,6 +879,7 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
                 nextTradeBuyUsd = totalSoldUsd;
                 activeTradePair = null; // UNLOCK and wait for the next 15m + 5m setup
                 lastBuyPrice = 0;
+                highestPriceSinceEntry = 0;
                 trailingStopPrice = 0;
                 trailingStopTier = 0;
                 entryPositionUsd = 0;
@@ -671,6 +887,8 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
                 partialTake20Done = false;
                 keepRunnerUsd = 0;
                 totalSoldUsd = 0;
+                strategyState.position = 'FLAT';
+                strategyState.trail = 'OFF';
             }
         } else {
             return;
@@ -735,8 +953,22 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
     
     // Only update balance when realized
     if (!isBuy) {
-        updateDashboardStats(parseFloat(actualProfitUsd));
+        const realized = parseFloat(actualProfitUsd);
+        updateDashboardStats(realized, profitPercentage);
+        const tradeResult = realized >= 0 ? 'WIN' : 'LOSS';
+        updateCoinLearning(wsPair, tradeResult);
+        logClosedTrade(
+            lastBuyPrice,
+            currentPrice,
+            'BUY',
+            tradeResult,
+            realized,
+            wsPair
+        );
+        addTradeMarker(ohlc[ohlc.length - 1].time, 'SELL', `${tradeResult} ${wsPair}`);
     }
+
+    renderStrategyState();
 }
 
 // Initial Boot

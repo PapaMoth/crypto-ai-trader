@@ -14,6 +14,7 @@ import {
   detectTrend,
   Trend,
 } from "./indicators";
+import { detectMarket, MarketCondition } from "./lib/marketCondition";
 
 export type StrategySignal = "BUY" | "SELL" | "HOLD";
 
@@ -201,4 +202,82 @@ export function getStrategy(index: number): Strategy {
 
 export function getStrategyByName(name: string): Strategy | undefined {
   return STRATEGIES.find((s) => s.name.includes(name));
+}
+
+// ============= ADAPTIVE AUTO-SWITCHER (A/B/C) =============
+
+type LearningResult = "WIN" | "LOSS" | "BREAKEVEN";
+
+interface LearningState {
+  score: number;
+  uses: number;
+  wins: number;
+  losses: number;
+}
+
+type MarketLearningBook = Record<string, Record<MarketCondition, LearningState>>;
+
+export class AdaptiveStrategySelector {
+  private readonly candidates: Strategy[];
+  private readonly learning: MarketLearningBook;
+  private lastSelection: { strategy: Strategy; market: MarketCondition } | null = null;
+
+  constructor(candidates: Strategy[] = [new StrategyA(), new StrategyB(), new StrategyC()]) {
+    this.candidates = candidates;
+    this.learning = {};
+    for (const strategy of this.candidates) {
+      this.learning[strategy.name] = {
+        TREND_UP: { score: 1, uses: 0, wins: 0, losses: 0 },
+        TREND_DOWN: { score: 1, uses: 0, wins: 0, losses: 0 },
+        SIDEWAYS: { score: 1, uses: 0, wins: 0, losses: 0 },
+      };
+    }
+  }
+
+  generate(prices: number[]): { signal: StrategySignal; strategyName: string; market: MarketCondition } {
+    const market = detectMarket(prices);
+
+    let best: Strategy = this.candidates[0];
+    let bestScore = -Infinity;
+
+    for (const strategy of this.candidates) {
+      const state = this.learning[strategy.name][market];
+      // Light exploration bonus so underused strategies can still surface.
+      const explore = 1 / Math.sqrt(state.uses + 1);
+      const composite = state.score + explore * 0.2;
+      if (composite > bestScore) {
+        bestScore = composite;
+        best = strategy;
+      }
+    }
+
+    this.lastSelection = { strategy: best, market };
+    return {
+      signal: best.generate(prices),
+      strategyName: best.name,
+      market,
+    };
+  }
+
+  learn(result: LearningResult): void {
+    if (!this.lastSelection) return;
+
+    const { strategy, market } = this.lastSelection;
+    const state = this.learning[strategy.name][market];
+    state.uses += 1;
+
+    if (result === "WIN") {
+      state.wins += 1;
+      state.score += 0.15;
+    } else if (result === "LOSS") {
+      state.losses += 1;
+      state.score = Math.max(0.1, state.score - 0.18);
+    } else {
+      state.score += 0.01;
+    }
+  }
+
+  getPerformanceBook() {
+    return this.learning;
+  }
 }

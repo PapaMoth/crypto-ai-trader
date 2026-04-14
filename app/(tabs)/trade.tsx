@@ -8,6 +8,7 @@ export default function TradeScreen() {
   const [price, setPrice] = useState(0);
   const [signal, setSignal] = useState("...");
   const [prices, setPrices] = useState<number[]>([]);
+  const [stats, setStats] = useState<any>(null);
 
   // 🧠 Load AI memory once
   useEffect(() => {
@@ -47,10 +48,33 @@ export default function TradeScreen() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/stats`);
+        const data = await res.json();
+        setStats(data);
+      } catch (err) {
+        console.log("Stats fetch error", err);
+      }
+    };
+
+    fetchStats();
+    const i = setInterval(fetchStats, 5000);
+    return () => clearInterval(i);
+  }, []);
+
   return (
     <View style={styles.container}>
       <Text style={styles.price}>ETH: ${price}</Text>
       <Text style={styles.signal}>{signal}</Text>
+      {stats && (
+        <>
+          <Text style={styles.stats}>Balance: ${stats.balance}</Text>
+          <Text style={styles.stats}>Trades: {stats.totalTrades}</Text>
+          <Text style={styles.stats}>Win Rate: {stats.winRate}%</Text>
+        </>
+      )}
     </View>
   );
 }
@@ -59,4 +83,5 @@ const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: "center", alignItems: "center" },
   price: { fontSize: 28, fontWeight: "bold" },
   signal: { fontSize: 24, marginTop: 20 },
+  stats: { fontSize: 18, marginTop: 10 },
 });

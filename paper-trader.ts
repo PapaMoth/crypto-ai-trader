@@ -12,6 +12,9 @@ export interface Position {
   quantity: number;
   entryTime: Date;
   orderId: string; // Simulated order ID
+  highestPrice: number;
+  lowestPrice: number;
+  trailingStopPrice?: number;
 }
 
 export interface TradeResult {
@@ -30,6 +33,8 @@ export interface PaperTraderConfig {
   takeProfitPercent?: number; // Close trade at this profit (default: 0.5%)
   stopLossPercent?: number; // Close trade at this loss (default: 0.5%)
   maxPositions?: number; // Max concurrent positions (default: 1)
+  trailingStopPercent?: number; // Trail distance in decimal (default: 0.4%)
+  trailingActivationPercent?: number; // Profit threshold to activate trailing stop (default: 0.6%)
 }
 
 export interface PaperTraderStats {
@@ -58,6 +63,8 @@ export class PaperTrader {
   private takeProfitPercent: number;
   private stopLossPercent: number;
   private maxPositions: number;
+  private trailingStopPercent: number;
+  private trailingActivationPercent: number;
 
   private positions: Map<string, Position> = new Map();
   private closedTrades: TradeResult[] = [];
@@ -77,6 +84,8 @@ export class PaperTrader {
     this.takeProfitPercent = config.takeProfitPercent ?? 0.005;
     this.stopLossPercent = config.stopLossPercent ?? 0.005;
     this.maxPositions = config.maxPositions ?? 1;
+    this.trailingStopPercent = config.trailingStopPercent ?? 0.004;
+    this.trailingActivationPercent = config.trailingActivationPercent ?? 0.006;
   }
 
   /**
@@ -119,6 +128,8 @@ export class PaperTrader {
       quantity,
       entryTime: new Date(),
       orderId: `SIM-${++this.tradeIdCounter}`,
+      highestPrice: entryPrice,
+      lowestPrice: entryPrice,
     };
 
     this.positions.set(symbol, position);
@@ -134,6 +145,18 @@ export class PaperTrader {
    * Returns null if position still open, TradeResult if closed
    */
   checkPosition(symbol: string, currentPrice: number): TradeResult | null {
+    return this.checkPositionWithVolatility(symbol, currentPrice, 1);
+  }
+
+  /**
+   * Check position with volatility-adaptive take profit.
+   * volatilityFactor = 1 means base TP.
+   */
+  checkPositionWithVolatility(
+    symbol: string,
+    currentPrice: number,
+    volatilityFactor: number
+  ): TradeResult | null {
     const position = this.positions.get(symbol);
     if (!position) {
       return null;
@@ -151,8 +174,34 @@ export class PaperTrader {
 
     // Check if should close position
     let shouldClose = false;
+    let trailingStopTriggered = false;
+    const dynamicTakeProfit = this.takeProfitPercent * Math.max(0.6, Math.min(2.2, volatilityFactor));
 
-    if (Math.abs(profitPercent) >= this.takeProfitPercent) {
+    // Update trailing references and trailing stop price.
+    if (position.side === "BUY") {
+      position.highestPrice = Math.max(position.highestPrice, currentPrice);
+      if (profitPercent >= this.trailingActivationPercent) {
+        const candidate = position.highestPrice * (1 - this.trailingStopPercent);
+        position.trailingStopPrice = Math.max(position.trailingStopPrice ?? 0, candidate);
+        if (currentPrice <= (position.trailingStopPrice ?? 0)) {
+          shouldClose = true;
+          trailingStopTriggered = true;
+        }
+      }
+    } else {
+      position.lowestPrice = Math.min(position.lowestPrice, currentPrice);
+      if (profitPercent >= this.trailingActivationPercent) {
+        const candidate = position.lowestPrice * (1 + this.trailingStopPercent);
+        const existing = position.trailingStopPrice ?? Number.POSITIVE_INFINITY;
+        position.trailingStopPrice = Math.min(existing, candidate);
+        if (currentPrice >= (position.trailingStopPrice ?? Number.POSITIVE_INFINITY)) {
+          shouldClose = true;
+          trailingStopTriggered = true;
+        }
+      }
+    }
+
+    if (Math.abs(profitPercent) >= dynamicTakeProfit) {
       // Hit take profit
       shouldClose = true;
     } else if (Math.abs(profitPercent) >= this.stopLossPercent && profitPercent < 0) {
@@ -162,6 +211,10 @@ export class PaperTrader {
 
     if (!shouldClose) {
       return null;
+    }
+
+    if (trailingStopTriggered) {
+      console.log(`[PAPER] Trailing stop hit for ${symbol} @ ${currentPrice}`);
     }
 
     // Close position

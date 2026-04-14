@@ -4,6 +4,7 @@
  */
 
 import { PaperTrader, TradeResult } from "./paper-trader";
+import { detectMarket } from "./lib/marketCondition";
 
 // ============= TYPES =============
 
@@ -28,6 +29,7 @@ export interface BacktestConfig {
   minConfidence?: number;
   maxSlippage?: number; // % slippage to account for
   commission?: number;  // % commission per trade
+  avoidSideways?: boolean;
 }
 
 export interface BacktestResult {
@@ -92,6 +94,7 @@ export class AIBacktester {
       minConfidence: config.minConfidence ?? 0.6,
       maxSlippage: config.maxSlippage ?? 0.001,
       commission: config.commission ?? 0,
+      avoidSideways: config.avoidSideways ?? false,
     };
 
     this.trader = new PaperTrader({
@@ -132,12 +135,42 @@ export class AIBacktester {
         i
       );
       const closePrices = previousBars.map((bar) => bar.close);
+      const market = detectMarket(closePrices);
 
       // Generate AI signal
       const signal = aiEngine.generateSignal(closePrices);
+      const aiSignal = signal.action;
+
+      if (market === "TREND_UP" && aiSignal === "SELL") {
+        continue; // ignore bad trade against trend
+      }
+
+      if (market === "TREND_DOWN" && aiSignal === "BUY") {
+        continue; // ignore bad trade against trend
+      }
+
+      if (market === "TREND_UP") {
+        if (signal.action === "SELL") signal.action = "HOLD"; // only BUY signals
+      } else if (market === "TREND_DOWN") {
+        if (signal.action === "BUY") signal.action = "HOLD"; // only SELL signals
+      } else if (market === "SIDEWAYS") {
+        // Sideways fallback: simple RSI-like mean reversion proxy using
+        // short-vs-long deviation when explicit RSI series is unavailable.
+        const short = closePrices.slice(-5);
+        const shortAvg = short.reduce((a, b) => a + b, 0) / short.length;
+        const longAvg = closePrices.reduce((a, b) => a + b, 0) / closePrices.length;
+        const deviation = longAvg > 0 ? (shortAvg - longAvg) / longAvg : 0;
+        if (deviation <= -0.004) signal.action = "BUY";
+        else if (deviation >= 0.004) signal.action = "SELL";
+        else signal.action = "HOLD";
+      }
 
       // Apply confidence filter
       if (signal.confidence < this.config.minConfidence) {
+        signal.action = "HOLD";
+      }
+
+      if (this.config.avoidSideways && market === "SIDEWAYS") {
         signal.action = "HOLD";
       }
 
@@ -159,7 +192,8 @@ export class AIBacktester {
 
       // Check if position closes
       if (position) {
-        const result = this.trader.checkPosition("BACKTEST", tradePrice);
+        const volatilityFactor = this.calculateVolatilityFactor(previousBars);
+        const result = this.trader.checkPositionWithVolatility("BACKTEST", tradePrice, volatilityFactor);
 
         if (result) {
           // Notify AI to learn from result
@@ -190,6 +224,29 @@ export class AIBacktester {
       priceData[0].timestamp,
       priceData[priceData.length - 1].timestamp
     );
+  }
+
+  /**
+   * Volatility factor for dynamic TP.
+   * 1.0 = normal, >1 = higher volatility, <1 = lower volatility.
+   */
+  private calculateVolatilityFactor(bars: PriceBar[]): number {
+    if (bars.length < 2) return 1;
+    const closes = bars.map((b) => b.close);
+    const avgClose = closes.reduce((a, b) => a + b, 0) / closes.length;
+    if (avgClose <= 0) return 1;
+
+    let sumRangePct = 0;
+    for (const bar of bars) {
+      const rangePct = ((bar.high - bar.low) / avgClose);
+      sumRangePct += rangePct;
+    }
+    const avgRangePct = sumRangePct / bars.length;
+
+    // Normalize around ~0.8% candle range as baseline
+    const baseline = 0.008;
+    const factor = avgRangePct / baseline;
+    return Math.max(0.6, Math.min(2.2, factor));
   }
 
   /**

@@ -6,6 +6,7 @@
 import crypto from "crypto";
 import { LiveTradingWithEvolvedStrategy } from "./evolved-strategy-injector";
 import { PriceBar } from "./ai-backtest";
+import { RiskEngine } from "./lib/risk-engine";
 
 // ============= TYPES =============
 
@@ -520,6 +521,14 @@ export class AIIntegratedBinanceTrader {
   private symbol: string;
   private priceHistory: number[] = [];
   private isTrading: boolean = false;
+  private readonly riskEngine = new RiskEngine({
+    maxDailyLossPct: 0.03,
+    maxSymbolExposurePct: 0.35,
+    maxTotalExposurePct: 0.8,
+  });
+  private startOfDayEquity: number = 0;
+  private symbolExposureUsd: Map<string, number> = new Map();
+  private totalExposureUsd = 0;
 
   constructor(
     authConfig: BinanceAuthConfig,
@@ -549,6 +558,7 @@ export class AIIntegratedBinanceTrader {
 
       // Get balance
       const balance = await this.trader.getBalance("USDT");
+      this.startOfDayEquity = parseFloat(balance.free || "0");
       console.log(`\nUSADT Available: ${balance.free}\n`);
 
       // Check open orders
@@ -611,6 +621,18 @@ export class AIIntegratedBinanceTrader {
       // Get available balance
       const balance = await this.trader.getBalance("USDT");
       const availableBalance = parseFloat(balance.free);
+      const plannedNotionalUsd = availableBalance * 0.9;
+
+      const riskCheck = this.riskEngine.canOpenPosition(this.symbol, plannedNotionalUsd, {
+        equity: availableBalance,
+        startOfDayEquity: this.startOfDayEquity || availableBalance,
+        symbolExposureUsd: this.symbolExposureUsd.get(this.symbol) || 0,
+        totalExposureUsd: this.totalExposureUsd,
+      });
+      if (!riskCheck.ok) {
+        console.warn(`⚠️ Risk block (${this.symbol}): ${riskCheck.reason}`);
+        return;
+      }
 
       if (availableBalance < price) {
         console.warn("⚠️ Insufficient balance for buy order");
@@ -618,7 +640,7 @@ export class AIIntegratedBinanceTrader {
       }
 
       // Calculate quantity (use 90% of available balance to be safe)
-      const amountToUse = availableBalance * 0.9;
+      const amountToUse = plannedNotionalUsd;
       const quantity = parseFloat((amountToUse / price).toFixed(8));
 
       if (quantity <= 0) {
@@ -638,6 +660,9 @@ export class AIIntegratedBinanceTrader {
       if (order.status === "FILLED") {
         this.aiTrading.recordTrade(true); // Assume positive initially
         this.trader.updateSessionMetrics(availableBalance - amountToUse);
+        const nextExposure = (this.symbolExposureUsd.get(this.symbol) || 0) + amountToUse;
+        this.symbolExposureUsd.set(this.symbol, nextExposure);
+        this.totalExposureUsd += amountToUse;
       }
     } catch (error) {
       console.error("❌ Buy order failed:", error);
@@ -672,6 +697,10 @@ export class AIIntegratedBinanceTrader {
         const proceeds = availableQuantity * price;
         this.aiTrading.recordTrade(true);
         this.trader.updateSessionMetrics(proceeds);
+        const currentExposure = this.symbolExposureUsd.get(this.symbol) || 0;
+        const reduction = Math.min(currentExposure, proceeds);
+        this.symbolExposureUsd.set(this.symbol, Math.max(0, currentExposure - reduction));
+        this.totalExposureUsd = Math.max(0, this.totalExposureUsd - reduction);
       }
     } catch (error) {
       console.error("❌ Sell order failed:", error);
