@@ -54,15 +54,23 @@
                 <div class="quick-stats">
                     <div class="stat-box">
                         <p>24h Profit</p>
-                        <strong class="positive">+$3,450.50</strong>
+                        <strong class="positive" id="kpi-profit-24h">+$3,450.50</strong>
                     </div>
                     <div class="stat-box">
                         <p>Active Trades</p>
-                        <strong>14</strong>
+                        <strong id="kpi-active-trades">14</strong>
                     </div>
                     <div class="stat-box">
                         <p>Win Rate</p>
-                        <strong class="positive">82.4%</strong>
+                        <strong class="positive" id="kpi-win-rate">82.4%</strong>
+                    </div>
+                    <div class="stat-box">
+                        <p>Strategy</p>
+                        <strong id="kpi-strategy">Sniper+Trend</strong>
+                    </div>
+                    <div class="stat-box">
+                        <p>Confidence</p>
+                        <strong id="kpi-confidence">92%</strong>
                     </div>
                 </div>
 
@@ -365,6 +373,38 @@
                                 <p style="font-size: 0.85rem; color: #888; margin: 0 0 10px 0;">Recent Referrals</p>
                                 <div id="referral-list" style="max-height: 200px; overflow-y: auto;">
                                     <p style="color: #666; font-size: 0.9rem; text-align: center;">No referrals yet. Share your code to get started!</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="trade-settings">
+                            <h4><i class='bx bx-transfer'></i> Copy Trading</h4>
+                            <p class="api-note">Follow a leader and mirror signals with your own risk caps.</p>
+                            <div class="input-group">
+                                <label>Leader Picker</label>
+                                <div id="copy-leaders-list" style="display: grid; gap: 8px; max-height: 190px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="input-group">
+                                <label for="copy-leader-id">Leader ID</label>
+                                <input type="text" id="copy-leader-id" placeholder="Paste leader user id">
+                            </div>
+                            <div class="input-group" style="margin-top: 10px;">
+                                <label for="copy-allocation">Allocation % (0-100)</label>
+                                <input type="number" id="copy-allocation" value="10" min="1" max="100" step="1">
+                            </div>
+                            <div class="input-group" style="margin-top: 10px;">
+                                <label for="copy-max-trade">Max Per Trade (USD)</label>
+                                <input type="number" id="copy-max-trade" value="100" min="10" step="10">
+                            </div>
+                            <div class="billing-actions">
+                                <button type="button" class="save-keys-btn" id="copy-follow-btn">Follow</button>
+                                <button type="button" class="save-keys-btn secondary" id="copy-unfollow-btn">Unfollow</button>
+                            </div>
+                            <p id="copy-status" class="api-status-text">Sign in to use copy trading.</p>
+                            <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-top: 10px;">
+                                <p style="font-size: 0.85rem; color: #888; margin: 0 0 10px 0;">Live Mirror Events</p>
+                                <div id="copy-events" style="max-height: 180px; overflow-y: auto;">
+                                    <p style="color: #666; font-size: 0.9rem; text-align: center;">No mirror events yet.</p>
                                 </div>
                             </div>
                         </div>

@@ -10,6 +10,8 @@ export interface PlanConfig {
     maxBacktestDays: number;
     copyTrading: boolean;
     liveTrading: boolean;
+    liveSignals: boolean;
+    autoTrading: boolean;
   };
 }
 
@@ -18,36 +20,42 @@ export const SAAS_PLANS: PlanConfig[] = [
     key: "free",
     name: "Free",
     monthlyUsd: 0,
-    features: ["Paper trading", "Basic dashboard"],
+    features: ["Paper trading only", "Basic dashboard"],
     limits: {
       maxStrategies: 1,
       maxBacktestDays: 7,
       copyTrading: false,
       liveTrading: false,
+      liveSignals: false,
+      autoTrading: false,
     },
   },
   {
     key: "pro",
     name: "Pro",
-    monthlyUsd: 89,
-    features: ["Adaptive strategy switching", "Pro dashboard", "Real historical backtests"],
+    monthlyUsd: 29,
+    features: ["Live signals", "Adaptive strategy switching", "Pro dashboard", "Real historical backtests"],
     limits: {
       maxStrategies: 3,
       maxBacktestDays: 180,
-      copyTrading: true,
-      liveTrading: true,
+      copyTrading: false,
+      liveTrading: false,
+      liveSignals: true,
+      autoTrading: false,
     },
   },
   {
     key: "elite",
     name: "Elite",
-    monthlyUsd: 199,
-    features: ["All Pro features", "Priority execution", "Advanced risk controls"],
+    monthlyUsd: 99,
+    features: ["All Pro features", "Auto trading", "Copy trading", "Priority execution", "Advanced risk controls"],
     limits: {
       maxStrategies: 10,
       maxBacktestDays: 3650,
       copyTrading: true,
       liveTrading: true,
+      liveSignals: true,
+      autoTrading: true,
     },
   },
 ];

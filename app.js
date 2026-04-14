@@ -384,6 +384,7 @@ let currentMarketRegime = 'UNKNOWN';
 let peakBalance = totalBalance;
 const tradeHistory = [];
 const coinLearningBook = {};
+let currentStrategyName = 'Sniper+Trend';
 const MIN_CONFIDENCE = 60;
 const STOP_LOSS = 0.005;
 const TAKE_PROFIT = 0.01;
@@ -469,9 +470,28 @@ function updateDashboardStats(profit, profitPct = 0) {
 
     document.getElementById('total-balance').innerText = formatCurrency(totalBalance);
     
-    // Slight random UI updates to make it feel alive
+    // KPI updates
+    const activeTradesEl = document.getElementById('kpi-active-trades');
+    const winRateEl = document.getElementById('kpi-win-rate');
+    const strategyEl = document.getElementById('kpi-strategy');
+    const profit24El = document.getElementById('kpi-profit-24h');
+    const confidenceEl = document.getElementById('kpi-confidence');
+    const activeTrades = activeTradePair ? 1 : 0;
+    const totalTrades = performanceState.wins + performanceState.losses;
+    const winRate = totalTrades ? (performanceState.wins / totalTrades) * 100 : 0;
+    if (activeTradesEl) activeTradesEl.innerText = String(activeTrades);
+    if (winRateEl) winRateEl.innerText = `${winRate.toFixed(1)}%`;
+    if (strategyEl) strategyEl.innerText = currentStrategyName;
+    if (profit24El) {
+        const sign = performanceState.realizedPnlUsd >= 0 ? '+' : '';
+        profit24El.innerText = `${sign}${formatCurrency(performanceState.realizedPnlUsd)}`;
+    }
+    if (confidenceEl) {
+        const c = coinLearningBook[currentUIPair]?.confidence ?? 0;
+        confidenceEl.innerText = `${Math.round(c)}%`;
+    }
     document.querySelector('.rsi-fill').style.width = Math.floor(Math.random() * 40 + 40) + '%';
-    document.getElementById('confidence-score').innerText = Math.floor(Math.random() * 15 + 80) + '%';
+    document.getElementById('confidence-score').innerText = `${Math.round(coinLearningBook[currentUIPair]?.confidence ?? 0)}%`;
     updateProDashboard();
 }
 
@@ -808,6 +828,7 @@ function simulateSignal(wsPair, currentPrice, ohlc, bb, rsi) {
     if (!activeTradePair) {
         const bullish15m = evaluate15mBullishDirection(wsPair);
         const sniperEntry5m = evaluate5mSniperEntry(ohlc, rsi);
+        currentStrategyName = sniperEntry5m && bullish15m ? 'Sniper+Trend' : bullish15m ? 'Trend Filter' : 'Standby';
         const currentRsi = rsi[rsi.length - 1] || 50;
         const avg = ohlc.slice(-20).reduce((acc, c) => acc + c.close, 0) / Math.max(1, Math.min(20, ohlc.length));
         const confidence = getConfidenceScore({
@@ -1050,6 +1071,13 @@ function setBillingStatus(message, kind = '') {
     el.className = kind ? `api-status-text ${kind}` : 'api-status-text';
 }
 
+function setCopyStatus(message, kind = '') {
+    const el = document.getElementById('copy-status');
+    if (!el) return;
+    el.innerText = message;
+    el.className = kind ? `api-status-text ${kind}` : 'api-status-text';
+}
+
 async function refreshAuthStatus() {
     if (!currentAuthToken) {
         setAuthStatus('Not signed in.');
@@ -1066,6 +1094,8 @@ async function refreshAuthStatus() {
         localStorage.setItem('nexus_user_email', currentUserEmail);
         setAuthStatus(`Signed in as ${data.email}`, 'success');
         loadReferralDashboard();
+        loadCopyEvents();
+        loadCopyLeaders();
     } catch (_err) {
         currentAuthToken = '';
         localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -1074,6 +1104,184 @@ async function refreshAuthStatus() {
         setAuthStatus('Session expired. Please sign in again.', 'error');
         setApiStatus('Sign in to manage your API keys.');
         setReferralStatus('Sign in to view referral details.');
+        setCopyStatus('Sign in to use copy trading.');
+        const leadersList = document.getElementById('copy-leaders-list');
+        if (leadersList) leadersList.innerHTML = '<p style="color:#666; font-size:0.9rem; text-align:center;">Sign in to load leaders...</p>';
+    }
+}
+
+async function loadCopyEvents() {
+    const container = document.getElementById('copy-events');
+    if (!container) return;
+    if (!currentAuthToken || !currentUserEmail) {
+        container.innerHTML = '<p style="color:#666; font-size:0.9rem; text-align:center;">No mirror events yet.</p>';
+        return;
+    }
+    try {
+        const response = await fetch('/api/copy/events', {
+            headers: {
+                ...getAuthHeaders(),
+                'x-user-id': currentUserEmail
+            }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to load copy events.');
+        const events = Array.isArray(data.events) ? data.events.slice(-20).reverse() : [];
+        if (!events.length) {
+            container.innerHTML = '<p style="color:#666; font-size:0.9rem; text-align:center;">No mirror events yet.</p>';
+            return;
+        }
+        container.innerHTML = events.map((e) => {
+            const t = new Date(e.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;">
+                <strong>${e.side || e.type || 'EVENT'}</strong> ${e.symbol || ''} · $${Number(e.notionalUsd || 0).toFixed(2)} <span style="color:#888;">${t}</span>
+            </div>`;
+        }).join('');
+    } catch (err) {
+        container.innerHTML = `<p style="color:#ff6b6b; font-size:0.9rem;">${err.message || 'Unable to load events.'}</p>`;
+    }
+}
+
+async function loadCopyLeaders() {
+    const list = document.getElementById('copy-leaders-list');
+    if (!list) return;
+    if (!currentAuthToken || !currentUserEmail) {
+        list.innerHTML = '<p style="color:#666; font-size:0.9rem; text-align:center;">Sign in to load leaders...</p>';
+        return;
+    }
+    try {
+        let activeFollowing = new Set();
+        try {
+            const fRes = await fetch('/api/copy/following', {
+                headers: {
+                    ...getAuthHeaders(),
+                    'x-user-id': currentUserEmail
+                }
+            });
+            const fData = await fRes.json();
+            if (fRes.ok) {
+                const follows = Array.isArray(fData.follows) ? fData.follows : [];
+                activeFollowing = new Set(
+                    follows.filter((f) => f.status === 'active').map((f) => f.leaderId)
+                );
+            }
+        } catch (_ignore) {}
+
+        const response = await fetch('/api/copy/leaders', {
+            headers: {
+                ...getAuthHeaders(),
+                'x-user-id': currentUserEmail
+            }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to load leaders.');
+        const leaders = Array.isArray(data.leaders) ? data.leaders : [];
+        leaders.sort((a, b) => Number(b.followers || 0) - Number(a.followers || 0));
+        if (!leaders.length) {
+            list.innerHTML = '<p style="color:#666; font-size:0.9rem; text-align:center;">No leaders available yet.</p>';
+            return;
+        }
+        list.innerHTML = leaders.map((l) => {
+            const winRate = Number(l.winRate || 0);
+            const isFollowing = activeFollowing.has(l.id);
+            return `<div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                    <div style="min-width:0;">
+                        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${l.email}</div>
+                        <div style="font-size:11px;color:#9aa3b2;">ID: ${l.id}</div>
+                    </div>
+                    <button type="button" class="save-keys-btn ${isFollowing ? 'secondary' : ''}" data-follow-leader="${l.id}" style="margin:0; width:auto; padding:6px 10px;">${isFollowing ? 'Following' : 'Follow'}</button>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+                    <span style="font-size:11px;padding:4px 7px;border-radius:999px;background:rgba(0,242,254,0.15);color:#8eeeff;">Followers: ${l.followers || 0}</span>
+                    <span style="font-size:11px;padding:4px 7px;border-radius:999px;background:rgba(245,199,106,0.15);color:#f5c76a;">Win Rate: ${winRate.toFixed(1)}%</span>
+                    <span style="font-size:11px;padding:4px 7px;border-radius:999px;background:rgba(74,222,128,0.15);color:#86efac;">Active: ${l.activeFollowers || 0}</span>
+                    ${isFollowing ? '<span style="font-size:11px;padding:4px 7px;border-radius:999px;background:rgba(0,255,163,0.15);color:#7ef7cf;">Following</span>' : ''}
+                </div>
+            </div>`;
+        }).join('');
+        list.querySelectorAll('[data-follow-leader]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const leaderId = btn.getAttribute('data-follow-leader');
+                const leaderInput = document.getElementById('copy-leader-id');
+                if (leaderInput) leaderInput.value = leaderId || '';
+                const action = String(btn.textContent || '').trim().toLowerCase();
+                if (action === 'following') {
+                    await unfollowLeader();
+                } else {
+                    await followLeader();
+                }
+                await loadCopyLeaders();
+            });
+        });
+    } catch (_err) {
+        list.innerHTML = '<p style="color:#ff6b6b; font-size:0.9rem; text-align:center;">Unable to load leaders</p>';
+    }
+}
+
+async function followLeader() {
+    const leaderInput = document.getElementById('copy-leader-id');
+    const allocationInput = document.getElementById('copy-allocation');
+    const maxTradeInput = document.getElementById('copy-max-trade');
+    const leaderId = leaderInput ? String(leaderInput.value || '').trim() : '';
+    const allocationPct = allocationInput ? Number(allocationInput.value || 10) / 100 : 0.1;
+    const maxPerTradeUsd = maxTradeInput ? Number(maxTradeInput.value || 100) : 100;
+    if (!currentAuthToken || !currentUserEmail) {
+        setCopyStatus('Sign in to use copy trading.', 'error');
+        return;
+    }
+    if (!leaderId) {
+        setCopyStatus('Leader ID is required.', 'error');
+        return;
+    }
+    try {
+        const response = await fetch('/api/copy/follow', {
+            method: 'POST',
+            headers: {
+                ...getAuthHeaders(),
+                'x-user-id': currentUserEmail
+            },
+            body: JSON.stringify({
+                leaderId,
+                allocationPct,
+                maxPerTradeUsd
+            })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to follow leader.');
+        setCopyStatus('Following leader successfully.', 'success');
+        await loadCopyEvents();
+    } catch (err) {
+        setCopyStatus(err.message || 'Failed to follow leader.', 'error');
+    }
+}
+
+async function unfollowLeader() {
+    const leaderInput = document.getElementById('copy-leader-id');
+    const leaderId = leaderInput ? String(leaderInput.value || '').trim() : '';
+    if (!currentAuthToken || !currentUserEmail) {
+        setCopyStatus('Sign in to use copy trading.', 'error');
+        return;
+    }
+    if (!leaderId) {
+        setCopyStatus('Leader ID is required.', 'error');
+        return;
+    }
+    try {
+        const response = await fetch('/api/copy/unfollow', {
+            method: 'POST',
+            headers: {
+                ...getAuthHeaders(),
+                'x-user-id': currentUserEmail
+            },
+            body: JSON.stringify({ leaderId })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to unfollow leader.');
+        setCopyStatus('Unfollowed leader.', 'success');
+        await loadCopyEvents();
+    } catch (err) {
+        setCopyStatus(err.message || 'Failed to unfollow leader.', 'error');
     }
 }
 
@@ -1225,6 +1433,19 @@ function setupAuthForm() {
     if (appleSigninBtn) {
         appleSigninBtn.addEventListener('click', () => handleAppleSignIn());
     }
+}
+
+function setupCopyTrading() {
+    const followBtn = document.getElementById('copy-follow-btn');
+    const unfollowBtn = document.getElementById('copy-unfollow-btn');
+    if (followBtn) followBtn.addEventListener('click', followLeader);
+    if (unfollowBtn) unfollowBtn.addEventListener('click', unfollowLeader);
+    setInterval(() => {
+        if (currentAuthToken) {
+            loadCopyEvents();
+            loadCopyLeaders();
+        }
+    }, 8000);
 }
 
 function handleGoogleSignIn() {
@@ -1473,7 +1694,8 @@ function setupReferralSystem() {
 }
 
 function setupApiKeysForm() {
-    setupAuthForm();
+setupAuthForm();
+setupCopyTrading();
     setupBillingButtons();
     setupReferralSystem();
     const form = document.getElementById('api-keys-form');

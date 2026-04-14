@@ -71,3 +71,17 @@ export async function requirePlan(req: Request, allowed: Plan[]) {
   }
   return { ok: true as const, userId, entitlement: ent };
 }
+
+export async function requireLiveTradingAccess(req: Request) {
+  const check = await requirePlan(req, ["pro", "elite"]);
+  if (!check.ok) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { error: "Upgrade to access live trading" },
+        { status: 403 }
+      ),
+    };
+  }
+  return check;
+}

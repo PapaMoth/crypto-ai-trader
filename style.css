@@ -211,6 +211,7 @@ body {
 .quick-stats {
     display: flex;
     gap: 24px;
+    flex-wrap: wrap;
     background: var(--panel-bg);
     padding: 20px 32px;
     border-radius: 16px;
