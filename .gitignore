@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Environment Variables / secrets
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+
+# Runtime secret storage
+data/*.json
+
+# Editor directories and files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

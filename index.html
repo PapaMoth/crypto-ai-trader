@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus AI | Automated Trading</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <link rel="stylesheet" href="style.css">
+    <!-- TradingView Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <!-- PayPal SDK -->
+    <script src="https://www.paypal.com/sdk/js?client-id=sb&currency=USD"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="logo">
+                <div class="logo-icon"><i class='bx bx-hive'></i></div>
+                <h2>Nexus AI</h2>
+            </div>
+            
+            <ul class="nav-links">
+                <li class="active"><a href="#"><i class='bx bx-grid-alt'></i> Dashboard</a></li>
+                <li><a href="#"><i class='bx bx-line-chart'></i> Market Info</a></li>
+                <li><a href="#"><i class='bx bx-bot'></i> AI Strategies</a></li>
+                <li><a href="#"><i class='bx bx-wallet'></i> Portfolio</a></li>
+                <li><a href="#"><i class='bx bx-history'></i> Trade History</a></li>
+                <li><a href="#"><i class='bx bx-cog'></i> Settings</a></li>
+            </ul>
+
+            <div class="ai-status">
+                <div class="status-indicator online"></div>
+                <div class="status-text">
+                    <p>Engine Status</p>
+                    <strong>ONLINE - Active Trading</strong>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content Layout -->
+        <main class="main-content">
+            <!-- Top Header Stats -->
+            <header class="top-header">
+                <div class="balance-card">
+                    <p class="label">Total Balance</p>
+                    <h1 class="value" id="total-balance">$142,450.00</h1>
+                    <div class="profit-chip positive" id="total-profit-chip">
+                        <i class='bx bx-up-arrow-alt'></i> <span>+24.5%</span> (Est. Margin)
+                    </div>
+                </div>
+
+                <div class="quick-stats">
+                    <div class="stat-box">
+                        <p>24h Profit</p>
+                        <strong class="positive">+$3,450.50</strong>
+                    </div>
+                    <div class="stat-box">
+                        <p>Active Trades</p>
+                        <strong>14</strong>
+                    </div>
+                    <div class="stat-box">
+                        <p>Win Rate</p>
+                        <strong class="positive">82.4%</strong>
+                    </div>
+                </div>
+
+                <div class="user-profile">
+                    <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Nexus&colors=indigo,blue,cyan" alt="AI Agent Profile" class="avatar" id="bot-avatar">
+                </div>
+            </header>
+
+            <!-- Dashboard Grid -->
+            <div class="dashboard-grid">
+                
+                <!-- Main Chart Column -->
+                <div class="chart-section glass-panel">
+                    <div class="panel-header">
+                        <div class="pair-selector">
+                            <i class='bx bxl-bitcoin bitcoin-color'></i>
+                            <select id="pair-selector" class="glass-select" style="background:transparent; border:none; color:#fff; font-size:1.2rem; font-weight:700; cursor:pointer; outline:none; font-family: inherit; margin: 0 10px;">
+                                <optgroup label="Primary Pairs">
+                                    <option value="BTC/USD" style="color: #0d1117;">BTC / USD</option>
+                                    <option value="ETH/USD" style="color: #0d1117;">ETH / USD</option>
+                                </optgroup>
+                                <optgroup label="Alternative Pairs">
+                                    <option value="XRP/USD" style="color: #0d1117;">XRP / USD</option>
+                                    <option value="SOL/USD" style="color: #0d1117;">SOL / USD</option>
+                                    <option value="ZEC/USD" style="color: #0d1117;">ZEC / USD</option>
+                                </optgroup>
+                                <optgroup label="BTCC Pairs">
+                                    <option value="BTC/CNY" style="color: #0d1117;">BTC / CNY (BTCC)</option>
+                                    <option value="ETH/CNY" style="color: #0d1117;">ETH / CNY (BTCC)</option>
+                                </optgroup>
+                            </select>
+                            <span class="live-badge">LIVE</span>
+                        </div>
+                        <div class="timeframes">
+                            <button>1m</button>
+                            <button>5m</button>
+                            <button class="active">15m</button>
+                            <button>1H</button>
+                            <button>4H</button>
+                        </div>
+                    </div>
+                    <div id="tv-chart" class="chart-container"></div>
+                </div>
+
+                <!-- Right Sidebar Column -->
+                <div class="side-panel">
+                    <div class="glass-panel strategy-state-panel">
+                        <div class="panel-header">
+                            <h3><i class='bx bx-pulse'></i> Strategy State</h3>
+                        </div>
+                        <div class="state-grid">
+                            <div class="state-item">
+                                <span class="state-label">15m Trend</span>
+                                <strong id="state-trend-15m">WAIT</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">5m Entry</span>
+                                <strong id="state-entry-5m">WAIT</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">Position</span>
+                                <strong id="state-position">FLAT</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">Sold %</span>
+                                <strong id="state-sold">0%</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">Runner %</span>
+                                <strong id="state-runner">2%</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">Emergency</span>
+                                <strong id="state-emergency">CLEAR</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Supported Exchanges -->
+                    <div class="glass-panel strategy-state-panel">
+                        <div class="panel-header">
+                            <h3><i class='bx bx-building'></i> Supported Exchanges</h3>
+                        </div>
+                        <div class="state-grid">
+                            <div class="state-item">
+                                <span class="state-label">Kraken.us</span>
+                                <strong style="color: #4ade80;">✓ Active</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">Binance.us</span>
+                                <strong style="color: #4ade80;">✓ Active</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">Coinbase</span>
+                                <strong style="color: #4ade80;">✓ Active</strong>
+                            </div>
+                            <div class="state-item">
+                                <span class="state-label">BTCC</span>
+                                <strong style="color: #4ade80;">✓ Active</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AI Brain Analytics -->
+                    <div class="ai-brain-section glass-panel">
+                        <div class="panel-header">
+                            <h3><i class='bx bx-brain'></i> AI Analysis</h3>
+                            <button class="icon-btn"><i class='bx bx-dots-vertical-rounded'></i></button>
+                        </div>
+                        <div class="ai-indicators">
+                            <div class="indicator">
+                                <span>RSI (14)</span>
+                                <div class="progress-bar"><div class="fill rsi-fill" style="width: 65%;"></div></div>
+                                <span class="val" id="rsi-value">65</span>
+                            </div>
+                            <div class="indicator">
+                                <span>MACD</span>
+                                <div class="progress-bar"><div class="fill macd-fill" style="width: 80%;"></div></div>
+                                <span class="val bullish">BULLISH</span>
+                            </div>
+                            <div class="indicator">
+                                <span>Sentiment</span>
+                                <div class="progress-bar"><div class="fill sentiment-fill" style="width: 90%;"></div></div>
+                                <span class="val extreme">STRONG BUY</span>
+                            </div>
+                        </div>
+                        <div class="ai-confidence">
+                            <h4>Trade Confidence</h4>
+                            <div class="confidence-circle" id="confidence-score">92%</div>
+                        </div>
+                        
+                        <div class="trade-settings">
+                            <h4>Position Sizing</h4>
+                            <div class="input-group">
+                                <label for="manual-buy-amount">Base Buy Amount (USD)</label>
+                                <input type="number" id="manual-buy-amount" value="5000.00" min="1" step="1">
+                            </div>
+                            <div class="input-group" style="margin-top: 12px;">
+                                <label for="target-profit">Target Profit (%)</label>
+                                <input type="number" id="target-profit" value="20.0" min="0.1" step="0.5">
+                            </div>
+                            <div class="input-group" style="margin-top: 12px;">
+                                <label for="sell-size">Sell Amount (%)</label>
+                                <input type="number" id="sell-size" value="20" min="1" max="100" step="1">
+                            </div>
+                        </div>
+
+                        <div class="trade-settings">
+                            <h4>Purchaser Account</h4>
+                            <p class="api-note">Create an account or sign in to manage your own encrypted API keys.</p>
+                            <form id="auth-form">
+                                <div class="input-group">
+                                    <label for="user-email">Email</label>
+                                    <input type="email" id="user-email" autocomplete="email" placeholder="you@example.com" required>
+                                </div>
+                                <div class="input-group" style="margin-top: 12px;">
+                                    <label for="user-password">Password</label>
+                                    <input type="password" id="user-password" autocomplete="current-password" placeholder="At least 8 characters" required>
+                                </div>
+                                <div class="auth-actions">
+                                    <button type="button" class="save-keys-btn" id="register-btn">Create Account</button>
+                                    <button type="button" class="save-keys-btn" id="login-btn">Sign In</button>
+                                    <button type="button" class="save-keys-btn secondary" id="logout-btn">Sign Out</button>
+                                </div>
+                                <p style="text-align: center; margin: 12px 0 8px 0; color: #888; font-size: 0.9rem;">Or sign in with:</p>
+                                <div class="auth-actions" style="gap: 8px;">
+                                    <button type="button" class="save-keys-btn secondary" id="google-signin-btn" style="background: linear-gradient(135deg, #4285F4 0%, #34A853 50%, #EA4335 100%); flex: 1;">
+                                        <i class='bx bxl-google'></i> Google
+                                    </button>
+                                    <button type="button" class="save-keys-btn secondary" id="apple-signin-btn" style="background: #000; color: #fff; flex: 1;">
+                                        <i class='bx bxl-apple'></i> Apple
+                                    </button>
+                                </div>
+                                <p id="auth-status" class="api-status-text">Not signed in.</p>
+                            </form>
+                        </div>
+
+                        <div class="trade-settings">
+                            <h4>Buy Access</h4>
+                            <p class="api-note">Choose one plan to unlock the app with Stripe Checkout.</p>
+                            <div class="billing-actions">
+                                <button type="button" class="save-keys-btn" id="buy-monthly-btn">Buy Monthly - $89.00</button>
+                                <button type="button" class="save-keys-btn secondary" id="buy-weekly-btn">Buy Weekly - $25.00</button>
+                            </div>
+                            <p id="billing-status" class="api-status-text">Sign in to start checkout.</p>
+                        </div>
+
+                        <div class="trade-settings">
+                            <h4><i class='bx bx-calendar'></i> Subscription Calendar</h4>
+                            <p class="api-note">Track your subscription status and renewal dates.</p>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                                <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; text-align: center;">
+                                    <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Current Plan</p>
+                                    <strong id="sub-plan" style="font-size: 1.1rem; color: #4ade80;">None</strong>
+                                </div>
+                                <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; text-align: center;">
+                                    <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Status</p>
+                                    <strong id="sub-status" style="font-size: 1.1rem; color: #ef4444;">Inactive</strong>
+                                </div>
+                            </div>
+                            <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
+                                <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Activated</p>
+                                <strong id="sub-activated" style="color: #fff;">Not yet activated</strong>
+                            </div>
+                            <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px;">
+                                <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Next Renewal</p>
+                                <strong id="sub-renewal" style="color: #fff;">—</strong>
+                            </div>
+                        </div>
+
+                        <div class="trade-settings">
+                            <h4><i class='bx bx-gift'></i> Referral Program</h4>
+                            <p class="api-note">Earn 30% of your referrals' first purchase. Share your link and get paid via PayPal.</p>
+
+                            <div style="background: rgba(100, 200, 100, 0.1); border: 1px solid rgba(100, 200, 100, 0.3); padding: 12px; border-radius: 8px; margin-bottom: 12px;">
+                                <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Your Referral Code</p>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="text" id="referral-code" readonly style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 8px; border-radius: 6px; font-family: monospace;">
+                                    <button type="button" class="save-keys-btn secondary" id="copy-referral-code-btn" style="flex: 0 0 100px;">Copy</button>
+                                </div>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                                <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; text-align: center;">
+                                    <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Total Referrals</p>
+                                    <strong id="referral-count" style="font-size: 1.1rem; color: #4ade80;">0</strong>
+                                </div>
+                                <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; text-align: center;">
+                                    <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Pending Earnings</p>
+                                    <strong id="referral-pending" style="font-size: 1.1rem; color: #fbbf24;">$0.00</strong>
+                                </div>
+                                <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; text-align: center;">
+                                    <p style="font-size: 0.85rem; color: #888; margin: 0 0 6px 0;">Total Earned</p>
+                                    <strong id="referral-total" style="font-size: 1.1rem; color: #4ade80;">$0.00</strong>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 12px;">
+                                <label for="paypal-email" style="font-size: 0.85rem; color: #888; display: block; margin-bottom: 6px;">PayPal Email for Payouts</label>
+                                <input type="email" id="paypal-email" placeholder="your-paypal@example.com" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 10px; border-radius: 6px;">
+                                <button type="button" class="save-keys-btn secondary" id="save-paypal-email-btn" style="margin-top: 8px; width: 100%;">Save PayPal Email</button>
+                                <p id="paypal-email-status" class="api-status-text" style="margin-top: 8px;">Enter your PayPal email to receive payouts.</p>
+                            </div>
+
+                            <div style="margin-bottom: 12px;">
+                                <button type="button" class="save-keys-btn" id="request-payout-btn" style="width: 100%; margin-bottom: 8px;">Request Payout (Min. $100)</button>
+                                <div id="paypal-button-container" style="display: none; margin-bottom: 12px;"></div>
+                                <p id="payout-status" class="api-status-text"></p>
+                            </div>
+
+                            <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px;">
+                                <p style="font-size: 0.85rem; color: #888; margin: 0 0 10px 0;">Recent Referrals</p>
+                                <div id="referral-list" style="max-height: 200px; overflow-y: auto;">
+                                    <p style="color: #666; font-size: 0.9rem; text-align: center;">No referrals yet. Share your code to get started!</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="trade-settings" data-section="api-keys" style="display: none;">
+                            <h4>Exchange API Setup</h4>
+                            <p class="api-note">Add your exchange API keys. Keys are sent to your backend and stored encrypted.</p>
+                            <form id="api-keys-form">
+                                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px; margin-bottom: 12px;">
+                                    <h5 style="margin: 0 0 10px 0; font-size: 0.9rem;">Kraken.us</h5>
+                                    <div class="input-group">
+                                        <label for="kraken-api-key">Kraken.us API Key</label>
+                                        <input type="password" id="kraken-api-key" autocomplete="off" placeholder="Paste your Kraken.us API key">
+                                    </div>
+                                    <div class="input-group" style="margin-top: 12px;">
+                                        <label for="kraken-api-secret">Kraken.us API Secret</label>
+                                        <input type="password" id="kraken-api-secret" autocomplete="off" placeholder="Paste your Kraken.us API secret">
+                                    </div>
+                                </div>
+                                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px; margin-bottom: 12px;">
+                                    <h5 style="margin: 0 0 10px 0; font-size: 0.9rem;">Binance.US</h5>
+                                    <div class="input-group">
+                                        <label for="binance-us-api-key">Binance.US API Key</label>
+                                        <input type="password" id="binance-us-api-key" autocomplete="off" placeholder="Paste your Binance.US API key">
+                                    </div>
+                                    <div class="input-group" style="margin-top: 12px;">
+                                        <label for="binance-us-secret-key">Binance.US Secret Key</label>
+                                        <input type="password" id="binance-us-secret-key" autocomplete="off" placeholder="Paste your Binance.US secret key">
+                                    </div>
+                                </div>
+                                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px; margin-bottom: 12px;">
+                                    <h5 style="margin: 0 0 10px 0; font-size: 0.9rem;">Coinbase</h5>
+                                    <div class="input-group">
+                                        <label for="coinbase-api-key">Coinbase API Key</label>
+                                        <input type="password" id="coinbase-api-key" autocomplete="off" placeholder="Paste your Coinbase API key">
+                                    </div>
+                                    <div class="input-group" style="margin-top: 12px;">
+                                        <label for="coinbase-secret">Coinbase Secret</label>
+                                        <input type="password" id="coinbase-secret" autocomplete="off" placeholder="Paste your Coinbase secret">
+                                    </div>
+                                </div>
+                                <div>
+                                    <h5 style="margin: 0 0 10px 0; font-size: 0.9rem;">BTCC</h5>
+                                    <div class="input-group">
+                                        <label for="btcc-api-key">BTCC API Key</label>
+                                        <input type="password" id="btcc-api-key" autocomplete="off" placeholder="Paste your BTCC API key">
+                                    </div>
+                                    <div class="input-group" style="margin-top: 12px;">
+                                        <label for="btcc-secret-key">BTCC Secret Key</label>
+                                        <input type="password" id="btcc-secret-key" autocomplete="off" placeholder="Paste your BTCC secret key">
+                                    </div>
+                                </div>
+                                <button type="submit" class="save-keys-btn" style="margin-top: 16px;">Save API Keys</button>
+                                <p id="api-keys-status" class="api-status-text">No keys saved yet.</p>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Live Signal Feed -->
+                    <div class="live-signals-section glass-panel">
+                        <div class="panel-header">
+                            <h3><i class='bx bx-radar'></i> Live Signals</h3>
+                        </div>
+                        <div class="signals-list" id="signals-list">
+                            <!-- Injected by JS -->
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Inject Bot Avatar Path and Scripts -->
+    <script src="app.js"></script>
+</body>
+</html>
